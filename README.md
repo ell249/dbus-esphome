@@ -4,6 +4,8 @@ A generic [ESPHome](https://esphome.io) → [Victron Venus OS](https://github.co
 
 Entities appear in the Venus OS Remote Console and are controllable from the GUI — no modification to the Venus OS firmware is required beyond installing this driver.
 
+> **Status: early testing** — This project is brand new and currently being tested for the first time. Expect rough edges; feedback and bug reports are very welcome.
+
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-yellow?logo=buymeacoffee)](https://buymeacoffee.com/ell249)
 
 ---
