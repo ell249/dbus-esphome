@@ -26,7 +26,33 @@ Flash the updated firmware if you added `reboot_timeout`.
 
 ---
 
-## 2. Copy the driver to the GX device
+## 2. Enable SSH on the GX device
+
+SSH is disabled by default on Venus OS and must be turned on before you can connect.
+
+**Via the Remote Console (web browser or local screen):**
+
+1. Open the Remote Console — navigate to **Settings → General**
+2. Set **Access Level** to **Superuser** (required to enable SSH)
+3. Go to **Settings → Remote Console** and ensure Remote Console is enabled if you are using the web interface
+4. Go to **Settings → General → SSH** and set it to **On**
+
+**Or via the Venus OS local touch display (if fitted):**
+
+1. Tap the menu icon → **Settings → General**
+2. Set Access Level to **Superuser**, then enable **SSH**
+
+Once SSH is enabled, the root account has no password by default — you can connect immediately:
+
+```bash
+ssh root@192.168.x.x
+```
+
+> If you cannot connect, confirm your GX device and computer are on the same local network and that you have the correct IP address (visible under **Settings → Ethernet** or **Settings → Wi-Fi**).
+
+---
+
+## 3. Copy the driver to the GX device
 
 From your computer (substitute the IP address of your Cerbo/Venus):
 
@@ -38,7 +64,7 @@ Or copy via USB: place the `dbus-esphome/` folder on a USB drive and mount it on
 
 ---
 
-## 3. Run the installer
+## 4. Run the installer
 
 SSH into the GX device and run:
 
@@ -55,7 +81,7 @@ The installer:
 
 ---
 
-## 4. Edit the configuration
+## 5. Edit the configuration
 
 ```bash
 nano /data/dbus-esphome/config.ini
@@ -88,7 +114,7 @@ Battery Voltage.max = 16
 
 ---
 
-## 5. Start the service
+## 6. Start the service
 
 ```bash
 svc -u /service/dbus-esphome
@@ -96,7 +122,7 @@ svc -u /service/dbus-esphome
 
 ---
 
-## 6. Verify
+## 7. Verify
 
 **Check logs:**
 ```bash
