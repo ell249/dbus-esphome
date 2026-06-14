@@ -62,9 +62,9 @@ Run this once from the root of the project on your **Mac or Linux computer** (no
 bash dbus-esphome/fetch-deps.sh
 ```
 
-This uses Docker to run pip inside a native `linux/arm/v7` + Python 3.11 container, producing a `dbus-esphome/vendor/` directory with binaries compiled for the correct architecture. The folder must be present before the next step.
+This uses Docker to run pip inside a native `linux/arm/v7` + Python 3.12 container, producing a `dbus-esphome/vendor/` directory with binaries compiled for the correct architecture. The folder must be present before the next step.
 
-> **Docker Desktop** must be installed and running. Download it from [docs.docker.com/desktop](https://docs.docker.com/desktop/install/mac-install/). The first run will pull the `python:3.11-slim` image (~50 MB).
+> **Docker Desktop** must be installed and running. Download it from [docs.docker.com/desktop](https://docs.docker.com/desktop/install/mac-install/). The first run will pull the `python:3.12-slim` image (~50 MB).
 
 ---
 
@@ -150,7 +150,7 @@ You should see output like:
 12:34:56 INFO    dbus-esphome  Starting dbus-esphome with 1 device(s)
 12:34:56 INFO    dbus-esphome  [192.168.1.100] Connecting …
 12:34:57 INFO    dbus-esphome  [192.168.1.100] Connected → My Device (my_device)
-12:34:57 INFO    dbus-esphome  [192.168.1.100] Relay service: 10 outputs, 1 digital inputs
+12:34:57 INFO    dbus-esphome  [192.168.1.100] Switch service: 10 outputs, 1 digital inputs
 12:34:57 INFO    dbus-esphome  [192.168.1.100] Temperature service: Temperature 1
 ```
 
@@ -159,15 +159,15 @@ You should see output like:
 dbus -y | grep esphome
 ```
 
-**Check a relay value:**
+**Check a switch output value:**
 ```bash
-dbus -y com.victronenergy.relay.esphome_my_device /Relay/0/State GetValue
+dbus -y com.victronenergy.switch.esphome_my_device /SwitchableOutput/0/State GetValue
 ```
 
-**Toggle a relay from the command line:**
+**Toggle a switch from the command line:**
 ```bash
-dbus -y com.victronenergy.relay.esphome_my_device /Relay/0/State SetValue 1
-dbus -y com.victronenergy.relay.esphome_my_device /Relay/0/State SetValue 0
+dbus -y com.victronenergy.switch.esphome_my_device /SwitchableOutput/0/State SetValue 1
+dbus -y com.victronenergy.switch.esphome_my_device /SwitchableOutput/0/State SetValue 0
 ```
 
 Open the Venus OS Remote Console — switches and sensors from your ESPHome device should appear in the relevant panels.

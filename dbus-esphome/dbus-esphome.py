@@ -5,16 +5,19 @@ dbus-esphome  –  Generic ESPHome → Victron Venus OS dbus bridge.
 Connects to one or more ESPHome devices via the native encrypted API (port 6053),
 auto-discovers every entity, and registers them as Venus OS dbus services:
 
-  Switches / Lights (on/off)   → com.victronenergy.relay.esphome_{name}
-                                    /Relay/N/State           (writeable, 0/1)
-                                    /Relay/N/Name
-  Lights (dimmable)            → same relay service
-                                    /Relay/N/Brightness      (writeable, 0-100)
+  Switches / Lights (on/off)   → com.victronenergy.switch.esphome_{name}
+                                    /SwitchableOutput/N/State           (writeable, 0/1)
+                                    /SwitchableOutput/N/Name
+                                    /SwitchableOutput/N/Settings/ShowUIControl = 1
+                                    /SwitchableOutput/N/Settings/Type   = 1 (TOGGLE)
+                                    /SwitchableOutput/N/Settings/Function = 2 (MANUAL)
+  Lights (dimmable)            → same switch service
+                                    /SwitchableOutput/N/Brightness      (writeable, 0-100)
   Temperature sensors          → com.victronenergy.temperature.esphome_{name}_{n}
                                     /Temperature
   Current / voltage / analog   → com.victronenergy.tank.esphome_{name}_{n}
                                     /Level  /RawValue  /RawUnit  /RawLower  /RawUpper
-  Binary sensors               → relay service
+  Binary sensors               → switch service
                                     /Digital/N/State         (read-only, 0/1)
                                     /Digital/N/Name
 
@@ -30,6 +33,9 @@ import logging
 import os
 import sys
 import threading
+import traceback
+
+import dbus
 
 import gi
 gi.require_version('GLib', '2.0')
@@ -130,7 +136,8 @@ class DeviceConnection:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                log.warning('[%s] %s: %s', self.host, type(exc).__name__, exc)
+                log.warning('[%s] %s: %s\n%s', self.host, type(exc).__name__, exc,
+                            traceback.format_exc())
 
             log.info('[%s] Reconnecting in 30 s …', self.host)
             GLib.idle_add(self._set_connected, False)
@@ -188,19 +195,33 @@ class DeviceConnection:
                          and e.device_class not in _TEMPERATURE_CLASSES]
         binary_snsr   = [e for e in entities if isinstance(e, BinarySensorInfo)]
 
-        # ── Relay service: switches, lights, binary sensors ──────────────────────
-        rs = VeDbusService(f'com.victronenergy.relay.esphome_{dev_name}')
+        # ── Switch service: switches, lights, binary sensors ─────────────────────
+        # Each VeDbusService needs its own private bus connection so they each get
+        # a clean '/' object-path namespace; sharing dbus.SystemBus() means they
+        # all fight over the one '/' slot on the shared connection.
+        rs = VeDbusService(
+            f'com.victronenergy.switch.esphome_{dev_name}',
+            bus=dbus.SystemBus(private=True),
+            register=False,
+        )
+        rs.register()
         rs.add_path('/DeviceInstance', base)
         rs.add_path('/ProductName', friendly)
         rs.add_path('/FirmwareVersion', 0)
         rs.add_path('/Connected', 0)
         rs.add_path('/Serial', dev_name)
-        self._relay_svc = rs
 
-        relay_idx = 0
+        output_idx = 0
         for entity in (*switches, *lights):
-            path = f'/Relay/{relay_idx}/State'
-            rs.add_path(f'/Relay/{relay_idx}/Name', entity.name)
+            dimmable = isinstance(entity, LightInfo) and getattr(entity, 'supports_brightness', False)
+            out_type = 2 if dimmable else 1  # 1=TOGGLE, 2=DIMMABLE
+
+            path = f'/SwitchableOutput/{output_idx}/State'
+            rs.add_path(f'/SwitchableOutput/{output_idx}/Name', entity.name)
+            rs.add_path(f'/SwitchableOutput/{output_idx}/Status', 0)
+            rs.add_path(f'/SwitchableOutput/{output_idx}/Settings/ShowUIControl', 1, writeable=True)
+            rs.add_path(f'/SwitchableOutput/{output_idx}/Settings/Type', out_type, writeable=True)
+            rs.add_path(f'/SwitchableOutput/{output_idx}/Settings/Function', 2, writeable=True)
             rs.add_path(
                 path, 0,
                 writeable=True,
@@ -208,9 +229,8 @@ class DeviceConnection:
             )
             mapping = (rs, path)
 
-            dimmable = isinstance(entity, LightInfo) and getattr(entity, 'supports_brightness', False)
             if dimmable:
-                bpath = f'/Relay/{relay_idx}/Brightness'
+                bpath = f'/SwitchableOutput/{output_idx}/Brightness'
                 rs.add_path(
                     bpath, 0,
                     writeable=True,
@@ -219,7 +239,7 @@ class DeviceConnection:
                 mapping = (rs, path, bpath)
 
             self._entity_map[entity.key] = mapping
-            relay_idx += 1
+            output_idx += 1
 
         for idx, entity in enumerate(binary_snsr):
             path = f'/Digital/{idx}/State'
@@ -227,16 +247,21 @@ class DeviceConnection:
             rs.add_path(path, 0)
             self._entity_map[entity.key] = (rs, path)
 
+        self._relay_svc = rs
+
         log.info(
-            '[%s] Relay service: %d outputs, %d digital inputs',
-            self.host, relay_idx, len(binary_snsr),
+            '[%s] Switch service: %d outputs, %d digital inputs',
+            self.host, output_idx, len(binary_snsr),
         )
 
         # ── Temperature services ─────────────────────────────────────────────────
         for idx, entity in enumerate(temp_sensors):
             svc = VeDbusService(
-                f'com.victronenergy.temperature.esphome_{dev_name}_{idx}'
+                f'com.victronenergy.temperature.esphome_{dev_name}_{idx}',
+                bus=dbus.SystemBus(private=True),
+                register=False,
             )
+            svc.register()
             svc.add_path('/DeviceInstance', base + 100 + idx)
             svc.add_path('/ProductName', entity.name)
             svc.add_path('/Connected', 0)
@@ -250,8 +275,11 @@ class DeviceConnection:
         for idx, entity in enumerate(other_sensors):
             raw_max = self._sensor_max(entity)
             svc = VeDbusService(
-                f'com.victronenergy.tank.esphome_{dev_name}_{idx}'
+                f'com.victronenergy.tank.esphome_{dev_name}_{idx}',
+                bus=dbus.SystemBus(private=True),
+                register=False,
             )
+            svc.register()
             svc.add_path('/DeviceInstance', base + 200 + idx)
             svc.add_path('/ProductName', entity.name)
             svc.add_path('/Connected', 0)

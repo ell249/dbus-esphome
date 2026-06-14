@@ -25,14 +25,14 @@ No polling. No HTTP. The connection is persistent and encrypted.
 
 | ESPHome entity | Venus OS dbus service | GUI appearance |
 |---|---|---|
-| **Switch** | `com.victronenergy.relay.esphome_{name}` | Relay toggle |
-| **Light** (on/off) | same relay service | Relay toggle |
-| **Light** (dimmable) | same relay service | Relay toggle + `/Relay/N/Brightness` (0–100) |
+| **Switch** | `com.victronenergy.switch.esphome_{name}` | Controllable switch tile |
+| **Light** (on/off) | same switch service | Controllable switch tile |
+| **Light** (dimmable) | same switch service | Switch tile + `/SwitchableOutput/N/Brightness` (0–100) |
 | **Sensor** — temperature | `com.victronenergy.temperature.esphome_{name}_{n}` | Temperature tile |
 | **Sensor** — current / voltage / analog | `com.victronenergy.tank.esphome_{name}_{n}` | Tank level (%) |
-| **Binary sensor** | relay service `/Digital/N/State` | Read-only indicator |
+| **Binary sensor** | switch service `/Digital/N/State` | Read-only indicator |
 
-Switches and lights are grouped into a single relay service per device. Temperature sensors each get their own temperature service. All other numeric sensors are represented as tank-level services, with the raw value scaled to a 0–100% level using configurable or unit-based defaults.
+Switches and lights are grouped into a single switch service per device. Temperature sensors each get their own temperature service. All other numeric sensors are represented as tank-level services, with the raw value scaled to a 0–100% level using configurable or unit-based defaults.
 
 The entity's `name:` field from the ESPHome YAML becomes the label in the Venus OS GUI.
 
@@ -43,7 +43,7 @@ The entity's `name:` field from the ESPHome YAML becomes the label in the Venus 
 Services are named using the ESPHome device name (the `name:` field in your ESPHome YAML) with hyphens replaced by underscores:
 
 ```
-com.victronenergy.relay.esphome_my_device
+com.victronenergy.switch.esphome_my_device
 com.victronenergy.temperature.esphome_my_device_0
 com.victronenergy.tank.esphome_my_device_0
 ```
@@ -94,8 +94,8 @@ Per-sensor overrides are set in the `[sensor_ranges]` section of `config.ini`.
 ## Requirements
 
 **Venus OS device (Cerbo GX, Venus GX, etc.):**
-- Venus OS v3.x (Python 3.11, pip3 available)
-- Internet access during installation (to download `aioesphomeapi`)
+- Venus OS v3.x (Python 3.12)
+- Docker on your computer (used once to build vendor deps — no internet needed on the GX device)
 
 **ESPHome device:**
 - ESPHome firmware with the `api:` component enabled

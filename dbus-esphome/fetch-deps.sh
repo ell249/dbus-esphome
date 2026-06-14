@@ -1,6 +1,6 @@
 #!/bin/bash
 # Run on your computer (Mac or Linux) BEFORE copying files to the GX device.
-# Uses Docker to install aioesphomeapi inside a native linux/arm/v7 + Python 3.11
+# Uses Docker to install aioesphomeapi inside a native linux/arm/v7 + Python 3.12
 # container, producing a vendor/ directory that runs correctly on Venus OS.
 #
 # Requires Docker Desktop: https://docs.docker.com/desktop/install/mac-install/
@@ -20,18 +20,18 @@ fi
 rm -rf "$VENDOR_DIR"
 mkdir -p "$VENDOR_DIR"
 
-echo "Fetching aioesphomeapi for linux/arm/v7 / Python 3.11 via Docker …"
-echo "(First run will pull the python:3.11-slim image — this may take a minute)"
+echo "Fetching aioesphomeapi for linux/arm/v7 / Python 3.12 via Docker …"
+echo "(First run will pull the python:3.12-slim image — this may take a minute)"
 
 docker run --rm \
     --platform linux/arm/v7 \
     -v "$VENDOR_DIR:/vendor" \
-    python:3.11-slim \
+    python:3.12-slim \
     sh -c "set -e
         apt-get update -qq
         apt-get install -y -qq --no-install-recommends gcc libc6-dev libffi-dev
         pip install --quiet --target /vendor 'aioesphomeapi>=18.0.0' tzdata
-        cp -r /usr/local/lib/python3.11/zoneinfo /vendor/
+        cp -r /usr/local/lib/python3.12/zoneinfo /vendor/
     "
 
 echo ""
