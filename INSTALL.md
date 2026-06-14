@@ -62,9 +62,9 @@ Run this once from the root of the project on your **Mac or Linux computer** (no
 bash dbus-esphome/fetch-deps.sh
 ```
 
-This downloads `aioesphomeapi` and all its dependencies into `dbus-esphome/vendor/`. The folder must be present before the next step.
+This uses Docker to run pip inside a native `linux/arm/v7` + Python 3.11 container, producing a `dbus-esphome/vendor/` directory with binaries compiled for the correct architecture. The folder must be present before the next step.
 
-> Python 3 with `pip3` must be installed on your computer. On macOS, `brew install python` or the official installer from python.org will provide it.
+> **Docker Desktop** must be installed and running. Download it from [docs.docker.com/desktop](https://docs.docker.com/desktop/install/mac-install/). The first run will pull the `python:3.11-slim` image (~50 MB).
 
 ---
 
@@ -207,6 +207,7 @@ This stops the service, removes the daemontools symlink, and removes the `/data/
 **Service won't start / crashes immediately:**
 Check `tail -f /var/log/dbus-esphome/current` for the error. Common causes:
 - `aioesphomeapi` not installed — run `fetch-deps.sh` on your computer, re-copy `vendor/`, then re-run `install.sh`
+- `ImportError: invalid ELF header` on a `.so` file — the vendor directory contains binaries for the wrong architecture. Re-run `fetch-deps.sh` (requires Docker) and re-copy `vendor/`
 - `velib_python` not found — check that Venus OS is v3.x and the path `/opt/victronenergy/dbus-systemcalc-py/ext/velib_python` exists
 
 **Device shows as offline (`/Connected = 0`):**
