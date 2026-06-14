@@ -52,19 +52,35 @@ ssh root@192.168.x.x
 
 ---
 
-## 3. Copy the driver to the GX device
+## 3. Download Python dependencies (on your computer)
 
-From your computer (substitute the IP address of your Cerbo/Venus):
+Venus OS does not include `pip3`, so dependencies must be downloaded on your computer and transferred along with the driver.
+
+Run this once from the root of the project on your **Mac or Linux computer** (not on the GX device):
+
+```bash
+bash dbus-esphome/fetch-deps.sh
+```
+
+This downloads `aioesphomeapi` and all its dependencies into `dbus-esphome/vendor/`. The folder must be present before the next step.
+
+> Python 3 with `pip3` must be installed on your computer. On macOS, `brew install python` or the official installer from python.org will provide it.
+
+---
+
+## 4. Copy the driver to the GX device
+
+From your computer, copy the entire `dbus-esphome/` folder — including the newly populated `vendor/` subdirectory:
 
 ```bash
 scp -r dbus-esphome/ root@192.168.x.x:/tmp/
 ```
 
-Or copy via USB: place the `dbus-esphome/` folder on a USB drive and mount it on the GX device.
+Or copy via USB: place the `dbus-esphome/` folder (with `vendor/` inside) on a USB drive and mount it on the GX device.
 
 ---
 
-## 4. Run the installer
+## 5. Run the installer
 
 SSH into the GX device and run:
 
@@ -81,7 +97,7 @@ The installer:
 
 ---
 
-## 5. Edit the configuration
+## 6. Edit the configuration
 
 ```bash
 nano /data/dbus-esphome/config.ini
@@ -114,7 +130,7 @@ Battery Voltage.max = 16
 
 ---
 
-## 6. Start the service
+## 7. Start the service
 
 ```bash
 svc -u /service/dbus-esphome
@@ -122,7 +138,7 @@ svc -u /service/dbus-esphome
 
 ---
 
-## 7. Verify
+## 8. Verify
 
 **Check logs:**
 ```bash
@@ -166,11 +182,12 @@ To update to a newer version of the driver:
 2. Run `install.sh` again — it preserves your existing `config.ini`
 3. Restart the service: `svc -t /service/dbus-esphome`
 
-To update `aioesphomeapi` only:
+To update `aioesphomeapi` only, run `fetch-deps.sh` again on your computer then re-copy `vendor/` and restart:
 
 ```bash
-pip3 install --target /data/dbus-esphome/vendor --upgrade aioesphomeapi
-svc -t /service/dbus-esphome
+bash dbus-esphome/fetch-deps.sh
+scp -r dbus-esphome/vendor/ root@192.168.x.x:/data/dbus-esphome/vendor/
+ssh root@192.168.x.x svc -t /service/dbus-esphome
 ```
 
 ---
@@ -189,7 +206,7 @@ This stops the service, removes the daemontools symlink, and removes the `/data/
 
 **Service won't start / crashes immediately:**
 Check `tail -f /var/log/dbus-esphome/current` for the error. Common causes:
-- `aioesphomeapi` not installed — re-run `install.sh`
+- `aioesphomeapi` not installed — run `fetch-deps.sh` on your computer, re-copy `vendor/`, then re-run `install.sh`
 - `velib_python` not found — check that Venus OS is v3.x and the path `/opt/victronenergy/dbus-systemcalc-py/ext/velib_python` exists
 
 **Device shows as offline (`/Connected = 0`):**

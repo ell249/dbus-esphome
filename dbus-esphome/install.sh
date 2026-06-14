@@ -6,7 +6,7 @@
 #
 # What it does:
 #   1. Copies driver files to /data/dbus-esphome/  (survives firmware updates)
-#   2. Installs aioesphomeapi and its dependencies into ./vendor/
+#   2. Copies pre-bundled aioesphomeapi and dependencies from ./vendor/
 #   3. Sets up a daemontools service symlink so the driver starts on boot
 #   4. Registers a /data/rc.local hook so the service is re-linked after updates
 
@@ -41,23 +41,24 @@ cp -f "$SCRIPT_DIR/service/log/run" "$INSTALL_DIR/service/log/"
 chmod +x "$INSTALL_DIR/service/run"
 chmod +x "$INSTALL_DIR/service/log/run"
 
-# ── 2. Install Python dependencies ───────────────────────────────────────────────
-echo "[2/4] Installing aioesphomeapi and dependencies to $INSTALL_DIR/vendor/ …"
-mkdir -p "$INSTALL_DIR/vendor"
+# ── 2. Copy pre-bundled Python dependencies ───────────────────────────────────────
+echo "[2/4] Copying aioesphomeapi and dependencies to $INSTALL_DIR/vendor/ …"
 
-# Require pip3; Venus OS v3.x ships with it
-if ! command -v pip3 &>/dev/null; then
-    echo "ERROR: pip3 not found. Ensure Venus OS v3.x is installed."
+if [ ! -d "$SCRIPT_DIR/vendor" ] || [ -z "$(ls -A "$SCRIPT_DIR/vendor" 2>/dev/null)" ]; then
+    echo ""
+    echo "ERROR: vendor/ directory is missing or empty."
+    echo "Run fetch-deps.sh on your computer first, then re-copy the dbus-esphome/"
+    echo "folder (including vendor/) to this device:"
+    echo ""
+    echo "  bash dbus-esphome/fetch-deps.sh          # on your computer"
+    echo "  scp -r dbus-esphome/ root@<gx-ip>:/tmp/  # then re-copy"
+    echo ""
     exit 1
 fi
 
-pip3 install \
-    --quiet \
-    --target "$INSTALL_DIR/vendor" \
-    --upgrade \
-    "aioesphomeapi>=18.0.0"
-
-echo "    Dependencies installed."
+mkdir -p "$INSTALL_DIR/vendor"
+cp -r "$SCRIPT_DIR/vendor/." "$INSTALL_DIR/vendor/"
+echo "    Dependencies copied."
 
 # ── 3. Register daemontools service ─────────────────────────────────────────────
 echo "[3/4] Registering daemontools service …"
