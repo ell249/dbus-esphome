@@ -1,0 +1,6 @@
+#!/bin/sh
+# daemontools service runner for dbus-esphome
+# Installed at: /data/dbus-esphome/service/run
+
+exec 2>&1
+exec /data/dbus-esphome/dbus-esphome.py --config /data/dbus-esphome/config.ini

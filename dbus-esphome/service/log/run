@@ -1,0 +1,4 @@
+#!/bin/sh
+# daemontools log runner for dbus-esphome
+
+exec multilog t s25000 n4 /var/log/dbus-esphome
