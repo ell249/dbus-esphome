@@ -127,3 +127,27 @@ dbus-esphome/
 Design, architecture and requirements by Elliot Alfirevich. Code written with assistance from Claude Code.
 
 MIT — see [LICENSE.md](LICENSE.md)
+
+### Third-party acknowledgements
+
+This project depends on the following open-source libraries:
+
+| Library | Licence | Notes |
+|---|---|---|
+| [aioesphomeapi](https://github.com/esphome/aioesphomeapi) | MIT | ESPHome native API client — core of this project |
+| [velib_python](https://github.com/victronenergy/velib_python) | MIT | Victron Energy Venus OS dbus utility library |
+| [protobuf](https://github.com/protocolbuffers/protobuf) | BSD-3-Clause | Google Protocol Buffers (ESPHome wire protocol) |
+| [cryptography](https://github.com/pyca/cryptography) | Apache 2.0 / BSD | PyCA cryptography (Noise handshake) |
+| [zeroconf](https://github.com/python-zeroconf/python-zeroconf) | LGPL-2.1 | mDNS/DNS-SD (used by aioesphomeapi) |
+| [chacha20poly1305-reuseable](https://github.com/Bluetooth-Devices/chacha20poly1305) | Apache 2.0 | ChaCha20-Poly1305 AEAD (Noise transport) |
+| [async-interrupt](https://github.com/Bluetooth-Devices/async-interrupt) | Apache 2.0 | asyncio interrupt helper |
+| [noiseprotocol](https://github.com/nicowillis/noiseprotocol) | MIT | Noise Protocol Framework |
+| [aiohappyeyeballs](https://github.com/aio-libs/aiohappyeyeballs) | MIT | RFC 6555 dual-stack TCP connection |
+| [ifaddr](https://github.com/pydron/ifaddr) | MIT | Network interface address enumeration |
+| [cffi](https://github.com/python-cffi/cffi) | MIT | C Foreign Function Interface (cryptography dep) |
+| [tzdata](https://github.com/python/tzdata) | Apache 2.0 | IANA timezone database |
+| [tzlocal](https://github.com/regebro/tzlocal) | MIT | Local timezone detection |
+| [dbus-python](https://dbus.freedesktop.org/doc/dbus-python/) | MIT | Python bindings for D-Bus (system library on Venus OS) |
+| [PyGObject / GLib](https://pygobject.gnome.org) | LGPL-2.1+ | GLib main loop integration (system library on Venus OS) |
+
+`zeroconf` and `PyGObject` are licensed under LGPL-2.1. Both are used as unmodified dynamically-loaded libraries, which is expressly permitted by the LGPL.
