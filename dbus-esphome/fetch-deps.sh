@@ -53,12 +53,13 @@ elif [ -n "${1:-}" ]; then
     # Auto-detect mode: SSH to the device
     GX_IP="$1"
     echo "Detecting architecture and Python version from $GX_IP …"
-    RAW_ARCH=$(ssh -o ConnectTimeout=5 -o BatchMode=yes root@"$GX_IP" 'uname -m' 2>/dev/null) || {
+    DETECT=$(ssh -o ConnectTimeout=5 root@"$GX_IP" 'printf "%s\n%s\n" "$(uname -m)" "$(python3 --version 2>&1)"') || {
         echo "ERROR: Could not SSH to root@$GX_IP"
-        echo "Check the IP address and that SSH key access is enabled on the device."
+        echo "Check the IP address and that SSH is enabled on the device."
         exit 1
     }
-    RAW_PY=$(ssh root@"$GX_IP" 'python3 --version 2>&1' 2>/dev/null)
+    RAW_ARCH=$(echo "$DETECT" | sed -n '1p')
+    RAW_PY=$(echo "$DETECT"   | sed -n '2p')
     echo "  Detected: arch=$RAW_ARCH  python=$RAW_PY"
 else
     echo "Usage:"
