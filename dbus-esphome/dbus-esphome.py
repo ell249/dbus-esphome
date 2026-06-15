@@ -193,7 +193,7 @@ class DeviceConnection:
 
             def _build_in_glib():
                 try:
-                    self._build_services(entities, dev_name, friendly)
+                    self._build_services(entities, dev_name, device_info)
                 except Exception as e:
                     exc_box.append(e)
                 finally:
@@ -219,12 +219,20 @@ class DeviceConnection:
 
     # ── dbus service construction ────────────────────────────────────────────────
 
-    def _build_services(self, entities, dev_name: str, friendly: str):
+    def _build_services(self, entities, dev_name: str, device_info):
         """
         Called once after first successful entity discovery.
         Creates Venus OS dbus services for every discovered entity type.
         """
         base = self._idx * 1000
+        friendly    = device_info.friendly_name or device_info.name
+        firmware    = device_info.esphome_version or '0'
+        connection  = f'TCP {self.host}'
+        try:
+            mac_hex    = device_info.mac_address.replace(':', '')
+            product_id = int(mac_hex[-4:], 16)  # last 2 bytes of MAC → uint16
+        except (ValueError, AttributeError):
+            product_id = 0
 
         switches      = [e for e in entities if isinstance(e, SwitchInfo)]
         lights        = [e for e in entities if isinstance(e, LightInfo)]
@@ -257,9 +265,15 @@ class DeviceConnection:
         rs.register()
         rs.add_path('/DeviceInstance', base)
         rs.add_path('/ProductName', friendly)
-        rs.add_path('/FirmwareVersion', 0)
+        rs.add_path('/ProductId', product_id)
+        rs.add_path('/FirmwareVersion', firmware)
+        rs.add_path('/Mgmt/Connection', connection)
+        rs.add_path('/Mgmt/ProcessName', 'dbus-esphome')
+        rs.add_path('/Mgmt/ProcessVersion', '1.0')
         rs.add_path('/Connected', 0)
         rs.add_path('/Serial', dev_name)
+        rs.add_path('/ErrorCode', 0)
+        rs.add_path('/Alarm', 0)
 
         output_idx = 0
         for entity in (*switches, *lights, *buttons):
@@ -331,6 +345,11 @@ class DeviceConnection:
             svc.register()
             svc.add_path('/DeviceInstance', base + 100 + idx)
             svc.add_path('/ProductName', entity.name)
+            svc.add_path('/ProductId', product_id)
+            svc.add_path('/FirmwareVersion', firmware)
+            svc.add_path('/Mgmt/Connection', connection)
+            svc.add_path('/Mgmt/ProcessName', 'dbus-esphome')
+            svc.add_path('/Mgmt/ProcessVersion', '1.0')
             svc.add_path('/Connected', 0)
             svc.add_path('/Temperature', None)
             svc.add_path('/Status', 0)
@@ -349,6 +368,11 @@ class DeviceConnection:
             svc.register()
             svc.add_path('/DeviceInstance', base + 200 + idx)
             svc.add_path('/ProductName', entity.name)
+            svc.add_path('/ProductId', product_id)
+            svc.add_path('/FirmwareVersion', firmware)
+            svc.add_path('/Mgmt/Connection', connection)
+            svc.add_path('/Mgmt/ProcessName', 'dbus-esphome')
+            svc.add_path('/Mgmt/ProcessVersion', '1.0')
             svc.add_path('/Connected', 0)
             svc.add_path('/Level', None)
             svc.add_path('/RawValue', None)
