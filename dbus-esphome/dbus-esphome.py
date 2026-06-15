@@ -128,12 +128,16 @@ class DeviceConnection:
         host: str,
         encryption_key: str,
         sensor_ranges: dict,
+        fluid_types: dict,
+        temp_types: dict,
         async_loop: asyncio.AbstractEventLoop,
         device_idx: int,
     ):
         self.host = host
         self.encryption_key = encryption_key
         self.sensor_ranges = sensor_ranges
+        self.fluid_types = fluid_types
+        self.temp_types = temp_types
         self._loop = async_loop
         self._idx = device_idx
 
@@ -280,12 +284,18 @@ class DeviceConnection:
             is_button = isinstance(entity, ButtonInfo)
             dimmable = isinstance(entity, LightInfo) and _light_is_dimmable(entity)
             out_type = 2 if dimmable else 1  # 1=TOGGLE, 2=DIMMABLE
+            kind = 'dimmable' if dimmable else ('button' if is_button else 'toggle')
+            log.info('[%s]   output %d: %s (%s, type=%d, modes=%s)',
+                     self.host, output_idx, entity.name, kind, out_type,
+                     getattr(entity, 'supported_color_modes', '?'))
 
             path = f'/SwitchableOutput/{output_idx}/State'
             rs.add_path(f'/SwitchableOutput/{output_idx}/Name', entity.name)
             rs.add_path(f'/SwitchableOutput/{output_idx}/Status', 0)
             rs.add_path(f'/SwitchableOutput/{output_idx}/Settings/ShowUIControl', 1, writeable=True)
-            rs.add_path(f'/SwitchableOutput/{output_idx}/Settings/Type', out_type, writeable=True)
+            # Not writeable: Venus OS would reset this to 0 (Unknown) from its own
+            # settings store if it has no prior record of this output.
+            rs.add_path(f'/SwitchableOutput/{output_idx}/Settings/Type', out_type)
             rs.add_path(f'/SwitchableOutput/{output_idx}/Settings/Function', 2, writeable=True)
             rs.add_path(
                 path, 0,
@@ -293,15 +303,14 @@ class DeviceConnection:
                 onchangecallback=self._make_toggle_cb(entity, rs),
             )
             mapping = (rs, path)
-
             if dimmable:
-                bpath = f'/SwitchableOutput/{output_idx}/Brightness'
+                dlpath = f'/SwitchableOutput/{output_idx}/Dimming'
                 rs.add_path(
-                    bpath, 0,
+                    dlpath, 0,
                     writeable=True,
-                    onchangecallback=self._make_brightness_cb(entity),
+                    onchangecallback=self._make_dimming_level_cb(entity),
                 )
-                mapping = (rs, path, bpath)
+                mapping = (rs, path, dlpath)
 
             if not is_button:
                 # Buttons have no state updates; only switches/lights need entity_map
@@ -352,6 +361,7 @@ class DeviceConnection:
             svc.add_path('/Mgmt/ProcessVersion', '1.0')
             svc.add_path('/Connected', 0)
             svc.add_path('/Temperature', None)
+            svc.add_path('/TemperatureType', self._lookup_type(self.temp_types, entity, 2))
             svc.add_path('/Status', 0)
             self._temp_svcs[entity.key] = svc
             self._entity_map[entity.key] = (svc, '/Temperature')
@@ -374,6 +384,7 @@ class DeviceConnection:
             svc.add_path('/Mgmt/ProcessName', 'dbus-esphome')
             svc.add_path('/Mgmt/ProcessVersion', '1.0')
             svc.add_path('/Connected', 0)
+            svc.add_path('/FluidType', self._lookup_type(self.fluid_types, entity, 11))
             svc.add_path('/Level', None)
             svc.add_path('/RawValue', None)
             svc.add_path('/RawUnit', entity.unit_of_measurement or '')
@@ -394,6 +405,13 @@ class DeviceConnection:
                 return float(self.sensor_ranges[key])
         return _UNIT_MAX.get(entity.unit_of_measurement or '', 100.0)
 
+    def _lookup_type(self, type_map: dict, entity, default: int) -> int:
+        """Look up a per-sensor type override from config, falling back to default."""
+        for key in (entity.name, getattr(entity, 'object_id', None)):
+            if key and key.lower() in type_map:
+                return type_map[key.lower()]
+        return default
+
     # ── State update handler (called from asyncio thread) ────────────────────────
 
     def _on_state(self, state):
@@ -409,14 +427,18 @@ class DeviceConnection:
 
         elif isinstance(state, LightState):
             svc, path = mapping[0], mapping[1]
+            log.info('[%s] LightState key=%s on=%s brightness=%.3f → State=%d Dimming=%s',
+                     self.host, state.key, state.state, state.brightness or 0.0,
+                     1 if state.state else 0,
+                     max(1, round((state.brightness or 0.0) * 100)) if state.state else '(unchanged)')
+            GLib.idle_add(self._dbus_set, svc, path, 1 if state.state else 0)
             if len(mapping) > 2:
-                # Dimmable (Type=2): State IS the brightness (0=off, 1-100=on at level).
-                # Writing boolean 1 to a dimmer path means "1%" which renders as off.
-                brightness_pct = max(1, round(state.brightness * 100)) if state.state else 0
-                GLib.idle_add(self._dbus_set, svc, path, brightness_pct)
-                GLib.idle_add(self._dbus_set, svc, mapping[2], brightness_pct)
-            else:
-                GLib.idle_add(self._dbus_set, svc, path, 1 if state.state else 0)
+                # Always update DimmingLevel from ESPHome's retained brightness,
+                # even when off, so the slider shows the level and stays interactive.
+                brightness = state.brightness or 0.0
+                if brightness > 0:
+                    level = max(1, round(brightness * 100))
+                    GLib.idle_add(self._dbus_set, svc, mapping[2], level)
 
         elif isinstance(state, NumberState):
             svc, path = mapping[0], mapping[1]
@@ -463,13 +485,8 @@ class DeviceConnection:
                                 await result
                         GLib.idle_add(self._dbus_set, svc, path, 0)
                     elif _light_is_dimmable(entity):
-                        # Dimmable: Venus OS writes brightness 0-100 to State path
-                        brightness = max(0.0, min(1.0, float(value) / 100.0))
-                        result = self._client.light_command(
-                            key=entity.key,
-                            state=value > 0,
-                            brightness=brightness if value > 0 else None,
-                        )
+                        # State is on/off only; DimmingLevel path handles brightness.
+                        result = self._client.light_command(key=entity.key, state=state)
                         if asyncio.iscoroutine(result):
                             await result
                     else:
@@ -482,15 +499,17 @@ class DeviceConnection:
                     log.error('[%s] Command failed: %s', self.host, exc)
 
             asyncio.run_coroutine_threadsafe(_send(), self._loop)
-            return True  # Optimistic accept
+            return True
 
         return cb
 
-    def _make_brightness_cb(self, entity):
-        """Return an onchangecallback that sets light brightness (0-100)."""
+    def _make_dimming_level_cb(self, entity):
+        """Return an onchangecallback for DimmingLevel (0–100 → ESPHome 0.0–1.0)."""
         def cb(path, value):
             if self._client is None:
                 return False
+            log.info('[%s] Dimming write: path=%s value=%r type=%s',
+                     self.host, path, value, type(value).__name__)
             brightness = max(0.0, min(1.0, float(value) / 100.0))
 
             async def _send():
@@ -552,8 +571,22 @@ class DeviceConnection:
 
 
 # ─────────────────────────────────────────────────────────────────────────────────
-def parse_config(path: str) -> tuple[list[dict], dict]:
-    """Return (list-of-device-dicts, sensor_ranges-dict) from config.ini."""
+def _parse_int_section(cfg, section: str) -> dict:
+    """Read a config section whose values are integers (with optional ; comments)."""
+    result = {}
+    if section not in cfg:
+        return result
+    for raw_key, raw_val in cfg[section].items():
+        clean_val = raw_val.split(';')[0].split('#')[0].strip()
+        try:
+            result[raw_key.strip()] = int(clean_val)
+        except ValueError:
+            log.warning('[config] cannot parse %s.%s = %s', section, raw_key, raw_val)
+    return result
+
+
+def parse_config(path: str) -> tuple[list[dict], dict, dict, dict]:
+    """Return (devices, sensor_ranges, fluid_types, temp_types) from config.ini."""
     cfg = configparser.ConfigParser()
     cfg.read(path)
 
@@ -568,7 +601,6 @@ def parse_config(path: str) -> tuple[list[dict], dict]:
     sensor_ranges = {}
     if 'sensor_ranges' in cfg:
         for raw_key, raw_val in cfg['sensor_ranges'].items():
-            # Strip trailing comments and the ".max" suffix used in examples
             clean_val = raw_val.split('#')[0].strip()
             name = raw_key.rsplit('.', 1)[0] if raw_key.endswith('.max') else raw_key
             try:
@@ -576,7 +608,10 @@ def parse_config(path: str) -> tuple[list[dict], dict]:
             except ValueError:
                 log.warning('sensor_ranges: cannot parse %s = %s', raw_key, raw_val)
 
-    return devices, sensor_ranges
+    fluid_types = _parse_int_section(cfg, 'fluid_types')
+    temp_types  = _parse_int_section(cfg, 'temperature_types')
+
+    return devices, sensor_ranges, fluid_types, temp_types
 
 
 def run_asyncio(loop: asyncio.AbstractEventLoop, connections: list):
@@ -607,7 +642,7 @@ def main():
     # GLib main loop must be set as dbus default before any dbus/threading activity
     DBusGMainLoop(set_as_default=True)
 
-    devices, sensor_ranges = parse_config(args.config)
+    devices, sensor_ranges, fluid_types, temp_types = parse_config(args.config)
     if not devices:
         log.error('No [device_N] sections found in %s', args.config)
         sys.exit(1)
@@ -620,6 +655,8 @@ def main():
             host=d['host'],
             encryption_key=d['encryption_key'],
             sensor_ranges=sensor_ranges,
+            fluid_types=fluid_types,
+            temp_types=temp_types,
             async_loop=async_loop,
             device_idx=i,
         )
