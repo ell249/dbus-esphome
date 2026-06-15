@@ -67,6 +67,9 @@ from aioesphomeapi.model import (                         # noqa: E402
     LightInfo, LightState,
     SensorInfo, SensorState,
     BinarySensorInfo, BinarySensorState,
+    ButtonInfo,
+    NumberInfo, NumberState,
+    TextSensorInfo,
 )
 
 # ── Logging ──────────────────────────────────────────────────────────────────────
@@ -90,6 +93,24 @@ _UNIT_MAX = {
     'ppm': 5000.0,
 }
 _TEMPERATURE_CLASSES = frozenset({'temperature'})
+
+
+def _light_is_dimmable(entity: LightInfo) -> bool:
+    """Return True if this light supports brightness/dimming control.
+
+    Older aioesphomeapi used a 'supports_brightness' bool; newer versions
+    replaced it with 'supported_color_modes', a list of LightColorCapability
+    bitmask values where bit 1 (value 2) indicates brightness support.
+    """
+    if getattr(entity, 'supports_brightness', False):
+        return True
+    for mode in getattr(entity, 'supported_color_modes', ()):
+        try:
+            if int(mode) & 2:  # LightColorCapability.BRIGHTNESS = 2
+                return True
+        except (TypeError, ValueError):
+            pass
+    return False
 
 
 # ─────────────────────────────────────────────────────────────────────────────────
@@ -164,7 +185,25 @@ class DeviceConnection:
         )
 
         if not self._services_built:
-            self._build_services(entities, dev_name, friendly)
+            # VeDbusService path registration must run in the GLib main thread.
+            # Schedule it there via idle_add, then await completion without
+            # blocking the asyncio loop (which must stay live for ESPHome keepalives).
+            done = threading.Event()
+            exc_box = []
+
+            def _build_in_glib():
+                try:
+                    self._build_services(entities, dev_name, friendly)
+                except Exception as e:
+                    exc_box.append(e)
+                finally:
+                    done.set()
+                return False  # GLib.SOURCE_REMOVE
+
+            GLib.idle_add(_build_in_glib)
+            await asyncio.get_event_loop().run_in_executor(None, done.wait)
+            if exc_box:
+                raise exc_box[0]
             self._services_built = True
 
         GLib.idle_add(self._set_connected, True)
@@ -189,11 +228,22 @@ class DeviceConnection:
 
         switches      = [e for e in entities if isinstance(e, SwitchInfo)]
         lights        = [e for e in entities if isinstance(e, LightInfo)]
+        buttons       = [e for e in entities if isinstance(e, ButtonInfo)]
+        numbers       = [e for e in entities if isinstance(e, NumberInfo)]
         temp_sensors  = [e for e in entities if isinstance(e, SensorInfo)
                          and e.device_class in _TEMPERATURE_CLASSES]
         other_sensors = [e for e in entities if isinstance(e, SensorInfo)
                          and e.device_class not in _TEMPERATURE_CLASSES]
         binary_snsr   = [e for e in entities if isinstance(e, BinarySensorInfo)]
+
+        _handled = {SwitchInfo, LightInfo, ButtonInfo, NumberInfo,
+                    SensorInfo, BinarySensorInfo, TextSensorInfo}
+        skipped = [e for e in entities if type(e) not in _handled]
+        log.info('[%s] All entities (%d): %s', self.host, len(entities),
+                 ', '.join(f'{type(e).__name__}:{e.name}' for e in entities))
+        if skipped:
+            log.info('[%s] Skipped (unsupported type, %d): %s', self.host, len(skipped),
+                     ', '.join(f'{type(e).__name__}:{e.name}' for e in skipped))
 
         # ── Switch service: switches, lights, binary sensors ─────────────────────
         # Each VeDbusService needs its own private bus connection so they each get
@@ -212,8 +262,9 @@ class DeviceConnection:
         rs.add_path('/Serial', dev_name)
 
         output_idx = 0
-        for entity in (*switches, *lights):
-            dimmable = isinstance(entity, LightInfo) and getattr(entity, 'supports_brightness', False)
+        for entity in (*switches, *lights, *buttons):
+            is_button = isinstance(entity, ButtonInfo)
+            dimmable = isinstance(entity, LightInfo) and _light_is_dimmable(entity)
             out_type = 2 if dimmable else 1  # 1=TOGGLE, 2=DIMMABLE
 
             path = f'/SwitchableOutput/{output_idx}/State'
@@ -225,7 +276,7 @@ class DeviceConnection:
             rs.add_path(
                 path, 0,
                 writeable=True,
-                onchangecallback=self._make_toggle_cb(entity),
+                onchangecallback=self._make_toggle_cb(entity, rs),
             )
             mapping = (rs, path)
 
@@ -238,8 +289,24 @@ class DeviceConnection:
                 )
                 mapping = (rs, path, bpath)
 
-            self._entity_map[entity.key] = mapping
+            if not is_button:
+                # Buttons have no state updates; only switches/lights need entity_map
+                self._entity_map[entity.key] = mapping
             output_idx += 1
+
+        for num_idx, entity in enumerate(numbers):
+            path = f'/Number/{num_idx}/Value'
+            rs.add_path(f'/Number/{num_idx}/Name', entity.name)
+            rs.add_path(f'/Number/{num_idx}/Min', entity.min_value)
+            rs.add_path(f'/Number/{num_idx}/Max', entity.max_value)
+            rs.add_path(f'/Number/{num_idx}/Step', entity.step)
+            rs.add_path(f'/Number/{num_idx}/Unit', entity.unit_of_measurement or '')
+            rs.add_path(
+                path, None,
+                writeable=True,
+                onchangecallback=self._make_number_cb(entity),
+            )
+            self._entity_map[entity.key] = (rs, path)
 
         for idx, entity in enumerate(binary_snsr):
             path = f'/Digital/{idx}/State'
@@ -250,8 +317,8 @@ class DeviceConnection:
         self._relay_svc = rs
 
         log.info(
-            '[%s] Switch service: %d outputs, %d digital inputs',
-            self.host, output_idx, len(binary_snsr),
+            '[%s] Switch service: %d outputs (%d buttons, %d numbers), %d digital inputs',
+            self.host, output_idx, len(buttons), len(numbers), len(binary_snsr),
         )
 
         # ── Temperature services ─────────────────────────────────────────────────
@@ -318,10 +385,18 @@ class DeviceConnection:
 
         elif isinstance(state, LightState):
             svc, path = mapping[0], mapping[1]
-            GLib.idle_add(self._dbus_set, svc, path, 1 if state.is_on else 0)
             if len(mapping) > 2:
-                brightness_pct = round((state.brightness or 0.0) * 100)
+                # Dimmable (Type=2): State IS the brightness (0=off, 1-100=on at level).
+                # Writing boolean 1 to a dimmer path means "1%" which renders as off.
+                brightness_pct = max(1, round(state.brightness * 100)) if state.state else 0
+                GLib.idle_add(self._dbus_set, svc, path, brightness_pct)
                 GLib.idle_add(self._dbus_set, svc, mapping[2], brightness_pct)
+            else:
+                GLib.idle_add(self._dbus_set, svc, path, 1 if state.state else 0)
+
+        elif isinstance(state, NumberState):
+            svc, path = mapping[0], mapping[1]
+            GLib.idle_add(self._dbus_set, svc, path, state.state)
 
         elif isinstance(state, SensorState) and state.state is not None:
             svc, path = mapping[0], mapping[1]
@@ -341,8 +416,8 @@ class DeviceConnection:
 
     # ── dbus write callbacks (called from GLib thread) ───────────────────────────
 
-    def _make_toggle_cb(self, entity):
-        """Return an onchangecallback that sends on/off to ESPHome."""
+    def _make_toggle_cb(self, entity, svc):
+        """Return an onchangecallback that sends on/off/press to ESPHome."""
         def cb(path, value):
             if self._client is None:
                 return False
@@ -354,12 +429,31 @@ class DeviceConnection:
                         result = self._client.switch_command(
                             key=entity.key, state=state
                         )
+                        if asyncio.iscoroutine(result):
+                            await result
+                    elif isinstance(entity, ButtonInfo):
+                        # Buttons are momentary: press on rising edge, reset state to 0
+                        if state:
+                            result = self._client.button_command(key=entity.key)
+                            if asyncio.iscoroutine(result):
+                                await result
+                        GLib.idle_add(self._dbus_set, svc, path, 0)
+                    elif _light_is_dimmable(entity):
+                        # Dimmable: Venus OS writes brightness 0-100 to State path
+                        brightness = max(0.0, min(1.0, float(value) / 100.0))
+                        result = self._client.light_command(
+                            key=entity.key,
+                            state=value > 0,
+                            brightness=brightness if value > 0 else None,
+                        )
+                        if asyncio.iscoroutine(result):
+                            await result
                     else:
                         result = self._client.light_command(
-                            key=entity.key, is_on=state
+                            key=entity.key, state=state
                         )
-                    if asyncio.iscoroutine(result):
-                        await result
+                        if asyncio.iscoroutine(result):
+                            await result
                 except Exception as exc:
                     log.error('[%s] Command failed: %s', self.host, exc)
 
@@ -379,13 +473,34 @@ class DeviceConnection:
                 try:
                     result = self._client.light_command(
                         key=entity.key,
-                        is_on=brightness > 0,
+                        state=brightness > 0,
                         brightness=brightness,
                     )
                     if asyncio.iscoroutine(result):
                         await result
                 except Exception as exc:
                     log.error('[%s] Brightness command failed: %s', self.host, exc)
+
+            asyncio.run_coroutine_threadsafe(_send(), self._loop)
+            return True
+
+        return cb
+
+    def _make_number_cb(self, entity):
+        """Return an onchangecallback that sets a NumberInfo value on ESPHome."""
+        def cb(path, value):
+            if self._client is None:
+                return False
+
+            async def _send():
+                try:
+                    result = self._client.number_command(
+                        key=entity.key, state=float(value)
+                    )
+                    if asyncio.iscoroutine(result):
+                        await result
+                except Exception as exc:
+                    log.error('[%s] Number command failed: %s', self.host, exc)
 
             asyncio.run_coroutine_threadsafe(_send(), self._loop)
             return True
