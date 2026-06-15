@@ -6,7 +6,11 @@
 #
 # What it does:
 #   1. Copies driver files to /data/dbus-esphome/  (survives firmware updates)
-#   2. Copies pre-bundled aioesphomeapi and dependencies from ./vendor/
+#   2. Installs aioesphomeapi and dependencies into /data/dbus-esphome/vendor/
+#      – Primary:  downloads wheels from PyPI via get-deps.py (no pip required;
+#                  auto-selects the correct arch + Python version)
+#      – Fallback: copies a pre-built ./vendor/ if present (for air-gapped installs;
+#                  build it first with fetch-deps.sh on your computer)
 #   3. Sets up a daemontools service symlink so the driver starts on boot
 #   4. Registers a /data/rc.local hook so the service is re-linked after updates
 
@@ -41,24 +45,31 @@ cp -f "$SCRIPT_DIR/service/log/run" "$INSTALL_DIR/service/log/"
 chmod +x "$INSTALL_DIR/service/run"
 chmod +x "$INSTALL_DIR/service/log/run"
 
-# ── 2. Copy pre-bundled Python dependencies ───────────────────────────────────────
-echo "[2/4] Copying aioesphomeapi and dependencies to $INSTALL_DIR/vendor/ …"
+# ── 2. Install Python dependencies ───────────────────────────────────────────
+echo "[2/4] Installing Python dependencies …"
 
-if [ ! -d "$SCRIPT_DIR/vendor" ] || [ -z "$(ls -A "$SCRIPT_DIR/vendor" 2>/dev/null)" ]; then
-    echo ""
-    echo "ERROR: vendor/ directory is missing or empty."
-    echo "Run fetch-deps.sh on your computer first, then re-copy the dbus-esphome/"
-    echo "folder (including vendor/) to this device:"
-    echo ""
-    echo "  bash dbus-esphome/fetch-deps.sh          # on your computer"
-    echo "  scp -r dbus-esphome/ root@<gx-ip>:/tmp/  # then re-copy"
-    echo ""
-    exit 1
+VENDOR="$INSTALL_DIR/vendor"
+
+if [ -d "$SCRIPT_DIR/vendor" ] && [ -n "$(ls -A "$SCRIPT_DIR/vendor" 2>/dev/null)" ]; then
+    # Offline / air-gapped mode: use the pre-built vendor/ bundle
+    echo "    Pre-built vendor/ found – copying (offline mode) …"
+    mkdir -p "$VENDOR"
+    cp -r "$SCRIPT_DIR/vendor/." "$VENDOR/"
+    echo "    Done."
+else
+    python3 "$SCRIPT_DIR/get-deps.py" "$VENDOR" || {
+        echo ""
+        echo "ERROR: Dependency installation failed (see above)."
+        echo ""
+        echo "If this device has no internet access, build an offline bundle on your"
+        echo "computer first, then re-copy the dbus-esphome/ folder:"
+        echo "  bash dbus-esphome/fetch-deps.sh <gx-ip>"
+        echo "  scp -r dbus-esphome/ root@<gx-ip>:/tmp/"
+        echo ""
+        exit 1
+    }
+    echo "    Done."
 fi
-
-mkdir -p "$INSTALL_DIR/vendor"
-cp -r "$SCRIPT_DIR/vendor/." "$INSTALL_DIR/vendor/"
-echo "    Dependencies copied."
 
 # ── 3. Register daemontools service ─────────────────────────────────────────────
 echo "[3/4] Registering daemontools service …"

@@ -4,7 +4,8 @@
 
 - A Victron GX device (Cerbo GX, Venus GX, Ekrano GX, etc.) running **Venus OS v3.x**
 - SSH access to the GX device
-- The GX device must have internet access at install time (to download Python dependencies)
+- Internet access on the GX device at install time (to download Python dependency wheels)
+  — or, for air-gapped installs, see the [Offline / air-gapped install](#offline--air-gapped-install) section below
 - One or more ESPHome devices with the `api:` component enabled, reachable on the local network
 
 ---
@@ -52,35 +53,19 @@ ssh root@192.168.x.x
 
 ---
 
-## 3. Download Python dependencies (on your computer)
+## 3. Copy the driver to the GX device
 
-Venus OS does not include `pip3`, so dependencies must be downloaded on your computer and transferred along with the driver.
-
-Run this once from the root of the project on your **Mac or Linux computer** (not on the GX device):
-
-```bash
-bash dbus-esphome/fetch-deps.sh
-```
-
-This uses Docker to run pip inside a native `linux/arm/v7` + Python 3.12 container, producing a `dbus-esphome/vendor/` directory with binaries compiled for the correct architecture. The folder must be present before the next step.
-
-> **Docker Desktop** must be installed and running. Download it from [docs.docker.com/desktop](https://docs.docker.com/desktop/install/mac-install/). The first run will pull the `python:3.12-slim` image (~50 MB).
-
----
-
-## 4. Copy the driver to the GX device
-
-From your computer, copy the entire `dbus-esphome/` folder — including the newly populated `vendor/` subdirectory:
+From your computer, copy the `dbus-esphome/` folder to the GX device:
 
 ```bash
 scp -r dbus-esphome/ root@192.168.x.x:/tmp/
 ```
 
-Or copy via USB: place the `dbus-esphome/` folder (with `vendor/` inside) on a USB drive and mount it on the GX device.
+You do not need to run anything on your computer first. Python dependencies are fetched automatically during the next step.
 
 ---
 
-## 5. Run the installer
+## 4. Run the installer
 
 SSH into the GX device and run:
 
@@ -91,13 +76,15 @@ bash /tmp/dbus-esphome/install.sh
 
 The installer:
 1. Copies the driver files to `/data/dbus-esphome/` (this partition survives firmware updates)
-2. Downloads and installs `aioesphomeapi` and its dependencies into `/data/dbus-esphome/vendor/`
+2. Downloads `aioesphomeapi` and its dependencies as pre-built wheels into `/data/dbus-esphome/vendor/`, automatically selecting the correct build for the device's architecture and Python version (no pip required)
 3. Creates a daemontools service symlink at `/service/dbus-esphome`
 4. Adds a hook to `/data/rc.local` so the service symlink is re-created automatically after any firmware update
 
+Dependencies are installed once and stored under `/data/`, so they also survive firmware updates.
+
 ---
 
-## 6. Edit the configuration
+## 5. Edit the configuration
 
 ```bash
 nano /data/dbus-esphome/config.ini
@@ -130,7 +117,7 @@ Battery Voltage.max = 16
 
 ---
 
-## 7. Start the service
+## 6. Start the service
 
 ```bash
 svc -u /service/dbus-esphome
@@ -138,7 +125,7 @@ svc -u /service/dbus-esphome
 
 ---
 
-## 8. Verify
+## 7. Verify
 
 **Check logs:**
 ```bash
@@ -179,15 +166,56 @@ Open the Venus OS Remote Console — switches and sensors from your ESPHome devi
 To update to a newer version of the driver:
 
 1. Copy the new files to the GX device
-2. Run `install.sh` again — it preserves your existing `config.ini`
+2. Run `install.sh` again — it preserves your existing `config.ini` and skips reinstalling dependencies if they are already present
 3. Restart the service: `svc -t /service/dbus-esphome`
 
-To update `aioesphomeapi` only, run `fetch-deps.sh` again on your computer then re-copy `vendor/` and restart:
+To force a reinstall of Python dependencies (e.g. to pick up a newer `aioesphomeapi`):
 
 ```bash
-bash dbus-esphome/fetch-deps.sh
-scp -r dbus-esphome/vendor/ root@192.168.x.x:/data/dbus-esphome/vendor/
-ssh root@192.168.x.x svc -t /service/dbus-esphome
+rm -rf /data/dbus-esphome/vendor
+bash /tmp/dbus-esphome/install.sh
+svc -t /service/dbus-esphome
+```
+
+---
+
+## Offline / air-gapped install
+
+If the GX device has no internet access, you can build a dependency bundle on your computer and transfer it alongside the driver.
+
+> **Requires Docker Desktop** — [docs.docker.com/desktop](https://docs.docker.com/desktop/install/mac-install/)
+
+`fetch-deps.sh` SSHes to the GX device to detect its architecture and Python version, then uses Docker to download the correct dependency wheels:
+
+```bash
+bash dbus-esphome/fetch-deps.sh <gx-ip>
+```
+
+Example:
+```bash
+bash dbus-esphome/fetch-deps.sh 192.168.1.50
+# Detecting architecture and Python version from 192.168.1.50 …
+#   Detected: arch=armv7l  python=Python 3.12.9
+# Building vendor/ for platform=linux/arm/v7  python=3.12
+```
+
+If you prefer to specify the values manually instead of auto-detecting:
+
+```bash
+bash dbus-esphome/fetch-deps.sh --manual armv7 312    # ARMv7 + Python 3.12
+bash dbus-esphome/fetch-deps.sh --manual aarch64 312  # ARM64 + Python 3.12
+```
+
+To check arch and Python version on the device yourself:
+```bash
+ssh root@<gx-ip> 'uname -m && python3 --version'
+```
+
+Once `fetch-deps.sh` completes, copy the full folder (now including `vendor/`) to the GX device and run `install.sh` as normal — it detects the pre-built `vendor/` and uses it directly.
+
+```bash
+scp -r dbus-esphome/ root@<gx-ip>:/tmp/
+ssh root@<gx-ip> bash /tmp/dbus-esphome/install.sh
 ```
 
 ---
@@ -206,8 +234,7 @@ This stops the service, removes the daemontools symlink, and removes the `/data/
 
 **Service won't start / crashes immediately:**
 Check `tail -f /var/log/dbus-esphome/current` for the error. Common causes:
-- `aioesphomeapi` not installed — run `fetch-deps.sh` on your computer, re-copy `vendor/`, then re-run `install.sh`
-- `ImportError: invalid ELF header` on a `.so` file — the vendor directory contains binaries for the wrong architecture. Re-run `fetch-deps.sh` (requires Docker) and re-copy `vendor/`
+- `aioesphomeapi` not installed — re-run `install.sh`. If the device has no internet access, use `fetch-deps.sh` first (see [Offline install](#offline--air-gapped-install) above)
 - `velib_python` not found — check that Venus OS is v3.x and the path `/opt/victronenergy/dbus-systemcalc-py/ext/velib_python` exists
 
 **Device shows as offline (`/Connected = 0`):**

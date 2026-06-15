@@ -93,9 +93,10 @@ Per-sensor overrides are set in the `[sensor_ranges]` section of `config.ini`.
 
 ## Requirements
 
-**Venus OS device (Cerbo GX, Venus GX, etc.):**
-- Venus OS v3.x (Python 3.12)
-- Docker on your computer (used once to build vendor deps — no internet needed on the GX device)
+**Venus OS device (Cerbo GX, Venus GX, Ekrano GX, etc.):**
+- Venus OS v3.x (Python 3.11 or later)
+- Internet access on the GX device at install time (to download Python dependency wheels)
+- Or, for air-gapped installs: Docker on your computer — see [INSTALL.md](INSTALL.md)
 
 **ESPHome device:**
 - ESPHome firmware with the `api:` component enabled
@@ -112,6 +113,8 @@ dbus-esphome/
   config.ini            Device configuration
   install.sh            Installer (run on Venus OS via SSH)
   uninstall.sh          Uninstaller
+  get-deps.py           Dependency downloader (called by install.sh; no pip required)
+  fetch-deps.sh         Offline bundle builder (air-gapped installs only)
   service/
     run                 daemontools service runner
     log/run             daemontools log runner
