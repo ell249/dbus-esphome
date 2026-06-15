@@ -427,10 +427,6 @@ class DeviceConnection:
 
         elif isinstance(state, LightState):
             svc, path = mapping[0], mapping[1]
-            log.info('[%s] LightState key=%s on=%s brightness=%.3f → State=%d Dimming=%s',
-                     self.host, state.key, state.state, state.brightness or 0.0,
-                     1 if state.state else 0,
-                     max(1, round((state.brightness or 0.0) * 100)) if state.state else '(unchanged)')
             GLib.idle_add(self._dbus_set, svc, path, 1 if state.state else 0)
             if len(mapping) > 2:
                 # Always update DimmingLevel from ESPHome's retained brightness,
@@ -508,8 +504,6 @@ class DeviceConnection:
         def cb(path, value):
             if self._client is None:
                 return False
-            log.info('[%s] Dimming write: path=%s value=%r type=%s',
-                     self.host, path, value, type(value).__name__)
             brightness = max(0.0, min(1.0, float(value) / 100.0))
 
             async def _send():
