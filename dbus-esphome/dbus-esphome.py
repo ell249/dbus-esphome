@@ -31,6 +31,7 @@ import asyncio
 import configparser
 import logging
 import os
+import re
 import sys
 import threading
 import traceback
@@ -55,6 +56,7 @@ for _p in _VELIB_SEARCH:
         break
 
 from vedbus import VeDbusService  # noqa: E402  (after path manipulation)
+from settingsdevice import SettingsDevice  # noqa: E402
 
 # ── aioesphomeapi  (vendored into ./vendor/ by install.sh) ──────────────────────
 _VENDOR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'vendor')
@@ -93,6 +95,34 @@ _UNIT_MAX = {
     'ppm': 5000.0,
 }
 _TEMPERATURE_CLASSES = frozenset({'temperature'})
+
+
+def _get_vrm_instance(bus, device_class: str, identifier: str, default_instance: int) -> int:
+    """
+    Ask Venus OS localsettings (com.victronenergy.settings) for a stable,
+    collision-free VRM device instance for (device_class, identifier).
+
+    Settings written under /Settings/Devices/<id>/ClassAndVrmInstance are
+    handled specially by localsettings: when the requested "<class>:<instance>"
+    default collides with an instance already claimed by a *different*
+    identifier of the same class, the instance is bumped to the next free
+    number. The same identifier always gets back the same instance on
+    subsequent calls (e.g. after a service restart), so this is stable across
+    restarts while never colliding with other drivers' devices.
+    """
+    sanitized_id = re.sub(r'[^a-zA-Z0-9_]', '_', identifier)
+    settings = SettingsDevice(
+        bus=bus,
+        supportedSettings={
+            'instance': [
+                f'/Settings/Devices/{sanitized_id}/ClassAndVrmInstance',
+                f'{device_class}:{default_instance}',
+                0, 0,
+            ],
+        },
+        eventCallback=None,
+    )
+    return int(settings['instance'].rsplit(':', 1)[-1])
 
 
 def _light_is_dimmable(entity: LightInfo) -> bool:
@@ -261,13 +291,17 @@ class DeviceConnection:
         # Each VeDbusService needs its own private bus connection so they each get
         # a clean '/' object-path namespace; sharing dbus.SystemBus() means they
         # all fight over the one '/' slot on the shared connection.
+        switch_bus = dbus.SystemBus(private=True)
+        switch_instance = _get_vrm_instance(
+            switch_bus, 'switch', f'esphome_{dev_name}', default_instance=base
+        )
         rs = VeDbusService(
             f'com.victronenergy.switch.esphome_{dev_name}',
-            bus=dbus.SystemBus(private=True),
+            bus=switch_bus,
             register=False,
         )
         rs.register()
-        rs.add_path('/DeviceInstance', base)
+        rs.add_path('/DeviceInstance', switch_instance)
         rs.add_path('/ProductName', friendly)
         rs.add_path('/ProductId', product_id)
         rs.add_path('/FirmwareVersion', firmware)
@@ -346,13 +380,18 @@ class DeviceConnection:
 
         # ── Temperature services ─────────────────────────────────────────────────
         for idx, entity in enumerate(temp_sensors):
+            temp_bus = dbus.SystemBus(private=True)
+            temp_instance = _get_vrm_instance(
+                temp_bus, 'temperature', f'esphome_{dev_name}_{entity.name}',
+                default_instance=base + 100 + idx,
+            )
             svc = VeDbusService(
                 f'com.victronenergy.temperature.esphome_{dev_name}_{idx}',
-                bus=dbus.SystemBus(private=True),
+                bus=temp_bus,
                 register=False,
             )
             svc.register()
-            svc.add_path('/DeviceInstance', base + 100 + idx)
+            svc.add_path('/DeviceInstance', temp_instance)
             svc.add_path('/ProductName', entity.name)
             svc.add_path('/ProductId', product_id)
             svc.add_path('/FirmwareVersion', firmware)
@@ -370,13 +409,18 @@ class DeviceConnection:
         # ── Tank (level) services ─────────────────────────────────────────────────
         for idx, entity in enumerate(other_sensors):
             raw_max = self._sensor_max(entity)
+            tank_bus = dbus.SystemBus(private=True)
+            tank_instance = _get_vrm_instance(
+                tank_bus, 'tank', f'esphome_{dev_name}_{entity.name}',
+                default_instance=base + 200 + idx,
+            )
             svc = VeDbusService(
                 f'com.victronenergy.tank.esphome_{dev_name}_{idx}',
-                bus=dbus.SystemBus(private=True),
+                bus=tank_bus,
                 register=False,
             )
             svc.register()
-            svc.add_path('/DeviceInstance', base + 200 + idx)
+            svc.add_path('/DeviceInstance', tank_instance)
             svc.add_path('/ProductName', entity.name)
             svc.add_path('/ProductId', product_id)
             svc.add_path('/FirmwareVersion', firmware)
